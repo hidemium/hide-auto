@@ -84,6 +84,7 @@ Gọi `hideauto <command> <path> [flags]`, đọc **stdout** (JSON; `run-test` l
 | Lệnh | Cần app đang mở? | Dùng để |
 |------|------------------|---------|
 | `hideauto workspace` | Không | **Chạy ĐẦU TIÊN** — in `workflowsDir` (thư mục chứa `.hideauto` để sửa) + appDataPath |
+| `hideauto open [--timeout n]` | (tự bật) | Bật app nếu chưa chạy, chờ tới khi sẵn sàng (dùng khi `ping` báo `app-not-running`) |
 | `hideauto validate <path>` | Không | Kiểm tra file hợp lệ (cấu trúc graph) |
 | `hideauto list-node-types` | Không | Liệt kê node dùng được (chỉ catalog) |
 | `hideauto get-node-template <code>` | Không | Lấy template `data` (field + default) của 1 node |
@@ -92,6 +93,11 @@ Gọi `hideauto <command> <path> [flags]`, đọc **stdout** (JSON; `run-test` l
 | `hideauto run-test <path> [--scope ...] [--start-node <id>] [--verbose\|--quiet] [--max-lines n]` | Có | Chạy thử, stream log gọn (§6) |
 | `hideauto run-stop <path>` | Có | Dừng test run đang chạy của workflow |
 | `hideauto reload-session <path>` | Có | Ép app đọc lại file từ đĩa (thường không cần — xem nguyên tắc #4) |
+| `hideauto critic-review <path>` | Có | Chấm chất lượng workflow → findings + verdict (exit 1 nếu blocked) |
+| `hideauto list-variables` | Có | Liệt kê global variables (workflow tham chiếu `{{key}}`; value secret bị mask) |
+| `hideauto list-workflows` | Có | Liệt kê workflow đã có trong app (id/name/folder) |
+| `hideauto browser-state <path>` | Có | Trạng thái browser đang kết nối cho workflow |
+| `hideauto browser <sub> <path> [arg]` | Có | **Soi browser LIVE** của run-test (query/eval/screenshot/url/goto) — tìm/verify selector (§6b) |
 
 Lỗi in ra **stderr** dạng `{ "error": { "code", "message" } }`, exit code ≠ 0. `app-not-running` (exit 4) = app GUI chưa mở (các lệnh "Có" cần app).
 
@@ -100,7 +106,7 @@ Lỗi in ra **stderr** dạng `{ "error": { "code", "message" } }`, exit code �
 ## 4. Vòng lặp chuẩn
 
 ```
-0. Định vị         → hideauto workspace   (lấy workflowsDir); hideauto ping nếu cần lệnh connected
+0. Định vị         → hideauto workspace   (lấy workflowsDir). Cần lệnh connected: hideauto ping → nếu app-not-running thì hideauto open (chờ app bật)
 1. Hiểu yêu cầu    → hỏi/chốt với user điều còn mơ hồ (mục tiêu, URL, dữ liệu, PROFILE §5)
 2. Nắm bối cảnh    → đọc file .hideauto trong workflowsDir; hideauto list-node-types (đầu phiên)
 3. Sửa file        → thêm/sửa trong .data.nodes / .data.edges / .data.variables. Node mới: get-node-template <code> lấy field trước
@@ -108,7 +114,8 @@ Lỗi in ra **stderr** dạng `{ "error": { "code", "message" } }`, exit code �
 5. (Tuỳ chọn)      → app tự reload nếu đang mở; ép bằng hideauto reload-session <path> nếu cần chắc
 6. Chạy thử        → hideauto run-test <path>   → đọc JSONL log (§6)
 7. Chẩn đoán       → node nào error? sửa data/edge tương ứng → quay lại (3)
-8. Xong            → báo user kết quả + tóm tắt workflow đã làm
+8. (Nên) Chấm      → hideauto critic-review <path> → sửa finding severity cao / verdict "blocked" trước khi giao
+9. Xong            → báo user kết quả + tóm tắt workflow đã làm
 ```
 
 Không tự nhảy sang bước sau khi bước trước chưa sạch (validate còn error, hay run còn `failed`).
@@ -176,6 +183,20 @@ Ví dụ openConnect dùng profile có sẵn của app:
 
 ---
 
+## 6b. Soi browser LIVE để tìm selector
+
+Khi không chắc selector cho một node: **dùng chính browser mà run-test vừa mở** (không mở browser riêng). Sau `run-test`, browser **ở nguyên trang cuối** (hoặc trang node lỗi) → soi trực tiếp:
+
+- `hideauto browser url <path>` → URL + title hiện tại (xác nhận đang ở đúng trang).
+- `hideauto browser query <path> "<css>"` → `{ count, first:{tag,id,cls,text,visible,html} }`. **count=1 + đúng element** = selector tốt. count=0 → sai; count>1 → chưa đủ cụ thể.
+- `hideauto browser eval <path> "<js expression>"` → chạy JS **CHỈ ĐỌC** trong page để dò (vd `document.querySelectorAll('.item').length`, `[...document.querySelectorAll('a')].map(a=>a.getAttribute('href'))`). **KHÔNG** click/submit/đổi state bằng eval — đó là việc của node trong workflow.
+- `hideauto browser screenshot <path> [--full]` → lưu PNG vào OS temp, trả `{path}`. `Read` ảnh để xem trang, **rồi XOÁ file** (đừng để rác trên máy user).
+- `hideauto browser goto <path> <url>` → điều hướng (nếu cần tới trang khác để soi).
+
+Vòng làm: `run-test` (tới chỗ cần) → `browser query/eval` tìm selector → điền vào node → `run-test` lại verify. Chưa `run-test` (không có browser live) → lỗi `browser-unavailable`.
+
+---
+
 ## 7. Đọc lỗi `validate`
 
 Output: `{ ok, errors[], warnings[] }`. Mỗi issue: `{ severity, rule, message, nodeId?, edgeId?, index? }`. `rule` là slug ổn định:
@@ -208,8 +229,9 @@ Output: `{ ok, errors[], warnings[] }`. Mỗi issue: `{ severity, rule, message,
 
 ## 9. Ghi chú
 
-- **Template `data` cho từng node** lấy qua `get-node-template <code>` (list-node-types chỉ trả catalog nhẹ code/title/canvasType). Backup: nhân bản node cùng `code` đã có, hoặc `docs/*-node-spec.md`.
-- Lệnh nhóm 2 (`critic-review`, `list-variables`, `browser-state`) chưa có — sẽ bổ sung khi implement.
+- **Template `data` cho từng node** lấy qua `get-node-template <code>` (list-node-types chỉ trả catalog nhẹ code/title/canvasType). Backup: nhân bản node cùng `code` đã có.
+- **`{{key}}`** trong node có thể tham chiếu **global variable** (chạy `hideauto list-variables` để biết có gì) hoặc biến trong `.data.variables` của chính workflow.
+- **`critic-review`** dùng câu tiếng Anh dựng sẵn (`message`+`fixHint`); `verdict:"blocked"` = nên sửa trước khi giao.
 
 ## 10. Liên quan
 

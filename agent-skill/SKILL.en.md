@@ -84,6 +84,7 @@ Call `hideauto <command> <path> [flags]`, read **stdout** (JSON; `run-test` is J
 | Command | App running? | Purpose |
 |---------|--------------|---------|
 | `hideauto workspace` | No | **Run FIRST** — prints `workflowsDir` (where the `.hideauto` files are) + appDataPath |
+| `hideauto open [--timeout n]` | (launches) | Launch the app if not running, wait until ready (use when `ping` returns `app-not-running`) |
 | `hideauto validate <path>` | No | Check the file is valid (graph structure) |
 | `hideauto list-node-types` | No | List usable nodes (catalog only) |
 | `hideauto get-node-template <code>` | No | Get a node's `data` template (fields + defaults) |
@@ -92,6 +93,11 @@ Call `hideauto <command> <path> [flags]`, read **stdout** (JSON; `run-test` is J
 | `hideauto run-test <path> [--scope ...] [--start-node <id>] [--verbose\|--quiet] [--max-lines n]` | Yes | Test-run, stream compact logs (§6) |
 | `hideauto run-stop <path>` | Yes | Stop a running test run for the workflow |
 | `hideauto reload-session <path>` | Yes | Force the app to reload the file from disk (usually unneeded — see rule #4) |
+| `hideauto critic-review <path>` | Yes | Review workflow quality → findings + verdict (exit 1 if blocked) |
+| `hideauto list-variables` | Yes | List global variables (workflows reference `{{key}}`; secret values masked) |
+| `hideauto list-workflows` | Yes | List existing workflows in the app (id/name/folder) |
+| `hideauto browser-state <path>` | Yes | Show the browser connection state for a workflow |
+| `hideauto browser <sub> <path> [arg]` | Yes | **Inspect the LIVE run-test browser** (query/eval/screenshot/url/goto) — find/verify selectors (§6b) |
 
 Errors go to **stderr** as `{ "error": { "code", "message" } }` with a non-zero exit code. `app-not-running` (exit 4) = the GUI app isn't open (the "Yes" commands need it).
 
@@ -100,7 +106,7 @@ Errors go to **stderr** as `{ "error": { "code", "message" } }` with a non-zero 
 ## 4. Standard loop
 
 ```
-0. Locate      → hideauto workspace   (get workflowsDir); hideauto ping if you'll need connected commands
+0. Locate      → hideauto workspace   (get workflowsDir). For connected commands: hideauto ping → if app-not-running, hideauto open (wait for the app to start)
 1. Understand  → clarify anything vague with the user (goal, URLs, data, PROFILE §5)
 2. Context     → read the current .hideauto file in workflowsDir; hideauto list-node-types (once per session)
 3. Edit file   → add/edit inside .data.nodes / .data.edges / .data.variables. New node: get-node-template <code> first
@@ -108,7 +114,8 @@ Errors go to **stderr** as `{ "error": { "code", "message" } }` with a non-zero 
 5. (Optional)  → the app auto-reloads if open; force with hideauto reload-session <path> if you want certainty
 6. Test-run    → hideauto run-test <path>   → read the JSONL log (§6)
 7. Diagnose    → which node errored? fix its data/edge → go back to (3)
-8. Done        → report the result to the user + summarize the workflow you built
+8. (Advised)   → hideauto critic-review <path> → fix high-severity findings / a "blocked" verdict before handing off
+9. Done        → report the result to the user + summarize the workflow you built
 ```
 
 Never jump ahead while the previous step isn't clean (validate still has errors, or the run still `failed`).
@@ -176,6 +183,20 @@ Example openConnect using an existing app profile:
 
 ---
 
+## 6b. Inspect the LIVE browser to find selectors
+
+When you're unsure of a selector for a node: **use the very browser that run-test just opened** (no separate browser). After `run-test`, the browser stays on the last page (or the failing node's page) → inspect it directly:
+
+- `hideauto browser url <path>` → current URL + title (confirm you're on the right page).
+- `hideauto browser query <path> "<css>"` → `{ count, first:{tag,id,cls,text,visible,html} }`. **count=1 + the right element** = a good selector. count=0 → wrong; count>1 → not specific enough.
+- `hideauto browser eval <path> "<js expression>"` → run **READ-ONLY** JS in the page to probe (e.g. `document.querySelectorAll('.item').length`, `[...document.querySelectorAll('a')].map(a=>a.getAttribute('href'))`). **Do NOT** click/submit/mutate state via eval — that's the workflow node's job.
+- `hideauto browser screenshot <path> [--full]` → saves a PNG to the OS temp dir, returns `{path}`. `Read` the image to see the page, **then DELETE the file** (don't litter the user's machine).
+- `hideauto browser goto <path> <url>` → navigate (if you need another page to inspect).
+
+Loop: `run-test` (up to the point you need) → `browser query/eval` to find the selector → put it in the node → `run-test` again to verify. Without a prior `run-test` (no live browser) → `browser-unavailable` error.
+
+---
+
 ## 7. Reading `validate` errors
 
 Output: `{ ok, errors[], warnings[] }`. Each issue: `{ severity, rule, message, nodeId?, edgeId?, index? }`. `rule` is a stable slug:
@@ -209,5 +230,6 @@ Output: `{ ok, errors[], warnings[] }`. Each issue: `{ severity, rule, message, 
 ## 9. Notes
 
 - **Per-node `data` templates** come from `get-node-template <code>` (list-node-types only returns the light catalog: code/title/canvasType). Backup: clone a node with the same `code`.
-- Group-2 commands (`critic-review`, `list-variables`, `browser-state`) don't exist yet — coming later.
+- **`{{key}}`** inside a node can reference a **global variable** (run `hideauto list-variables` to see them) or a variable in the workflow's own `.data.variables`.
+- **`critic-review`** returns pre-built English `message`+`fixHint`; `verdict:"blocked"` means fix before handing off.
 - The CLI is self-describing: `hideauto --help`, `hideauto list-node-types`, and `hideauto get-node-template <code>` are the live sources of truth.
