@@ -27,7 +27,8 @@ Hướng dẫn AI agent vận hành app **HideAuto** để xây và debug workfl
 4. **App tự bắt file bạn sửa.** Nếu workflow đang mở trong app, file-watcher tự reload canvas (nếu user chưa sửa dở trên UI) — thường KHÔNG cần làm gì. Dùng `hideauto reload-session` khi muốn **ép** app khớp đĩa ngay (bỏ bản RAM chưa lưu của workflow đó).
 5. **Test trước khi tuyên bố xong** (`hideauto run-test`). Đọc log, sửa tới khi đạt. (run-test khoá canvas + bật Logs tab trong app giống user bấm Test — user xem được.)
 6. **Profile là nội dung workflow** — chốt với user, ghi vào node `openConnect` (xem §5). Đừng coi profile là tham số lúc chạy.
-7. **Ở trong `workflows/`.** Không sửa file ngoài thư mục này. Không tự chạy campaign/schedule thật.
+7. **Đừng tin `outcome:"success"` suông.** Nó chỉ nghĩa là node chạy xong không throw, KHÔNG đảm bảo hiệu ứng thật đã xảy ra. Sau mỗi thao tác đổi trạng thái quan trọng, chèn node đọc trạng thái thật (`getUrl` / `getText` / `runJs` lấy `document.title`…) rồi `addLog` để xác nhận (xem §6c).
+8. **Ở trong `workflows/`.** Không sửa file ngoài thư mục này. Không tự chạy campaign/schedule thật.
 
 ---
 
@@ -194,6 +195,34 @@ Khi không chắc selector cho một node: **dùng chính browser mà run-test v
 - `hideauto browser goto <path> <url>` → điều hướng (nếu cần tới trang khác để soi).
 
 Vòng làm: `run-test` (tới chỗ cần) → `browser query/eval` tìm selector → điền vào node → `run-test` lại verify. Chưa `run-test` (không có browser live) → lỗi `browser-unavailable`.
+
+---
+
+## 6c. Xác nhận trạng thái sau thao tác (verify + addLog)
+
+`outcome:"success"` của một node chỉ nghĩa là node **chạy xong không throw** — KHÔNG đảm bảo hiệu ứng mong muốn đã xảy ra (đã tới đúng trang, đã đăng nhập, form đã submit thật). Vì vậy **sau mỗi node có hiệu ứng đổi trạng thái quan trọng** (`gotoUrl`, `clickElement` dẫn tới điều hướng, `typeText`+submit, login…), chèn bước **kiểm chứng trạng thái thật rồi ghi log**:
+
+1. **Đọc trạng thái thật** bằng một node "get" phù hợp, **lưu vào biến** (`{{key}}`):
+   - `getUrl` → lưu `getUrlSaveTo` — xác nhận đã tới đúng URL.
+   - `getText` (`getTextSelector` + `getTextSaveTo`) — đọc text của element mốc (vd tên user sau đăng nhập, tiêu đề bài).
+   - `getHtml` (`getHtmlSelector` + `getHtmlSaveTo`) / `getAttribute` — đọc html/thuộc tính khi cần.
+   - **Tiêu đề trang:** KHÔNG có node riêng → dùng `runJs` với `runJsScript: "return document.title"` + lưu `runJsSaveResultTo`.
+   - Muốn **khẳng định** element tồn tại/hiển thị: `waitForSelector`, `checkElementVisible`, hoặc `elementExists` (rẽ nhánh).
+2. **Ghi log xác nhận** bằng node `addLog` tham chiếu biến vừa lưu (`addLogMessage` hỗ trợ `{{var}}`):
+   ```json
+   { "id": "n-log-after-login", "type": "basic", "position": { "x": 700, "y": 150 },
+     "data": { "code": "addLog", "label": "Verify login",
+               "addLogMessage": "After login → url={{cur_url}} user={{login_name}}",
+               "addLogIncludeTimestamp": true } }
+   ```
+   Dòng log này hiện trong Execution Log (user thấy khi Test) và trong JSONL run-log bạn đọc ở §6 → dùng chính nó để xác nhận thao tác trước đã "ăn" thật, thay vì chỉ tin `outcome:success`.
+3. **Cần chặn luồng khi sai:** dùng `elementExists` / `if` để rẽ sang nhánh lỗi thay vì đi tiếp mù quáng.
+
+Mẫu chuỗi điển hình:
+- `gotoUrl` → `getUrl` (lưu `{{cur_url}}`) → `addLog "url={{cur_url}}"`.
+- `clickElement` (Login) → `waitForSelector ".avatar"` → `getText` (`.username` → `{{login_name}}`) → `addLog "logged in as {{login_name}}"`.
+
+> **Vì sao dùng `addLog` để in biến:** ở compact log (§6), step `success` KHÔNG kèm `variables` (chỉ node lỗi mới có). `addLog` là cách rẻ để "in" giá trị biến đã đọc ra run-log mà không cần `--verbose`.
 
 ---
 
