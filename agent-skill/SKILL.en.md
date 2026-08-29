@@ -27,7 +27,8 @@ The **`hideauto` command** is already on the machine (installed app: on PATH aut
 4. **The app auto-detects your file edits.** If the workflow is open in the app, its file-watcher reloads the canvas automatically (when the user has no unsaved UI edits) — usually you need to do nothing. Use `hideauto reload-session` only to **force** the app to match disk now (discarding that workflow's unsaved in-memory draft).
 5. **Test before declaring done** (`hideauto run-test`). Read the log, fix until it passes. (run-test locks the canvas + opens the Logs tab in the app, exactly like the user clicking Test — the user can watch.)
 6. **The profile is workflow content** — decide it with the user and write it into the `openConnect` node (see §5). Don't treat the profile as a run-time parameter.
-7. **Stay inside `workflows/`.** Don't touch files outside this dir. Don't run real campaigns/schedules.
+7. **Never trust a bare `outcome:"success"`.** It only means the node ran without throwing — NOT that the intended effect happened. After every meaningful state-changing action, insert a node that reads the real state (`getUrl` / `getText` / `runJs` for `document.title`…) then an `addLog` to confirm (see §6c).
+8. **Stay inside `workflows/`.** Don't touch files outside this dir. Don't run real campaigns/schedules.
 
 ---
 
@@ -194,6 +195,34 @@ When you're unsure of a selector for a node: **use the very browser that run-tes
 - `hideauto browser goto <path> <url>` → navigate (if you need another page to inspect).
 
 Loop: `run-test` (up to the point you need) → `browser query/eval` to find the selector → put it in the node → `run-test` again to verify. Without a prior `run-test` (no live browser) → `browser-unavailable` error.
+
+---
+
+## 6c. Confirm state after an action (verify + addLog)
+
+A node's `outcome:"success"` only means it **ran without throwing** — NOT that the intended effect happened (landed on the right page, logged in, the form actually submitted). So **after every meaningful state-changing node** (`gotoUrl`, a `clickElement` that navigates, `typeText`+submit, login…), insert a step that **reads the real state, then logs it**:
+
+1. **Read the real state** with an appropriate "get" node and **save it to a variable** (`{{key}}`):
+   - `getUrl` → save via `getUrlSaveTo` — confirm you reached the right URL.
+   - `getText` (`getTextSelector` + `getTextSaveTo`) — read an anchor element's text (e.g. the username after login, a post title).
+   - `getHtml` (`getHtmlSelector` + `getHtmlSaveTo`) / `getAttribute` — read html/attributes when needed.
+   - **Page title:** there is NO dedicated node → use `runJs` with `runJsScript: "return document.title"` and save via `runJsSaveResultTo`.
+   - To **assert** an element exists/is visible: `waitForSelector`, `checkElementVisible`, or `elementExists` (branching).
+2. **Log the confirmation** with an `addLog` node referencing the saved variable (`addLogMessage` supports `{{var}}`):
+   ```json
+   { "id": "n-log-after-login", "type": "basic", "position": { "x": 700, "y": 150 },
+     "data": { "code": "addLog", "label": "Verify login",
+               "addLogMessage": "After login → url={{cur_url}} user={{login_name}}",
+               "addLogIncludeTimestamp": true } }
+   ```
+   This line shows up in the Execution Log (visible to the user during Test) and in the JSONL run-log you read in §6 → use it to confirm the prior action really took effect, instead of trusting `outcome:success`.
+3. **To halt on failure:** use `elementExists` / `if` to branch to an error path instead of blindly continuing.
+
+Typical chains:
+- `gotoUrl` → `getUrl` (save `{{cur_url}}`) → `addLog "url={{cur_url}}"`.
+- `clickElement` (Login) → `waitForSelector ".avatar"` → `getText` (`.username` → `{{login_name}}`) → `addLog "logged in as {{login_name}}"`.
+
+> **Why use `addLog` to print variables:** in compact logs (§6) a `success` step does NOT include `variables` (only failing nodes do). `addLog` is the cheap way to "print" a variable you read into the run-log without `--verbose`.
 
 ---
 
