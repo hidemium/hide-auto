@@ -1,6 +1,9 @@
 {
   "skills": [
     "hideauto-shared-data-files",
-    "hideauto-data-resources"
+    "hideauto-data-resources",
+    "hideauto-schedule-runs",
+    "hideauto-hidemium",
+    "hideauto-proxy"
   ]
 }
